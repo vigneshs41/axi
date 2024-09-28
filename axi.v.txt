@@ -1,0 +1,95 @@
+module axi_m #( parameter bus_width_data = 128 ,tkeep_width = 16 )
+(
+        input reset_n,
+        input clk,
+
+        // Outside world
+        output wire [bus_width_data-1:0] m_tdata, // master data Interface to the outside world
+        output wire [tkeep_width-1:0] m_tkeep,    // Master tkeep
+        output wire m_tvalid,
+        input  m_tready,
+
+        // From the application
+        input  [bus_width_data-1:0] in_data, // Input data from other module
+        input  [tkeep_width-1:0] in_keep,    // Corresponding input tkeep
+        output ready_to_accept_data,                 // Use this to determine if you can write into the buffer (ready)
+        input  data_is_written                       // Make this high when you send your data. (valid)
+ );
+
+
+reg [bus_width_data-1:0] reg_tdata; // Main register data.
+reg [tkeep_width-1:0] reg_tkeep;
+reg [bus_width_data-1:0] SP_data; // Scratch pad data.
+reg [tkeep_width-1:0] SP_keep;
+
+
+reg RF; // Register Fulll
+reg SPF; // Scratch pad full
+
+assign m_tvalid = RF;
+assign m_tdata = reg_tdata;
+assign m_tkeep = reg_tkeep;
+assign ready_to_accept_data = ((!RF)||(RF  && m_tready));//&&(!SPF);
+
+always @(posedge clk)
+begin
+    if(reset_n == 1'b0)  
+        begin
+           RF<=0;
+           SPF <=0;
+           reg_tdata <= 0;
+           reg_tkeep <= 0;
+           SP_data <= 0;
+           SP_keep <= 0;
+        end
+        else
+        begin
+        if(data_is_written )
+        begin
+            if(m_tvalid& m_tready) // If data is read by the AXI slave
+            begin
+                reg_tdata <= in_data;
+                reg_tkeep <= in_keep;
+                RF <=1;  
+            end
+            else // Data is not read by AXI slave
+            begin  
+                if(!RF) // Register is empty
+                begin
+                    RF<=1;
+                    reg_tdata<=in_data;
+                    reg_tkeep <= in_keep;
+                end
+                else //If register is full and you get more data, put it in scratch pad.
+                begin
+                    SP_data<=in_data;
+                    SP_keep<=in_keep;
+                    RF<=1; // Not required. Just for reiteration.
+                    SPF<=1;
+               end      
+            end
+               
+        end
+        else // data_is_written  is low.  Only when data_is_written  is low, SPF is high
+        begin
+           if(m_tvalid& m_tready) // Data read by AXI slave
+            begin
+                if(SPF) // scratch pad has data
+                begin
+                    reg_tdata<=  SP_data;
+                    reg_tkeep<=  SP_keep;
+                    SPF<=0;
+                    RF<=1;
+                end
+                else // Data not read by AXI slave
+                begin
+                    RF<=0;              
+                end
+           
+            end
+        end      
+    end
+end
+endmodule
+
+///////////////////////////////////////////////////////////////////////////
